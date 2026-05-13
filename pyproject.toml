@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-skill-from-docs = "skill_from_docs.cli:main"
+sfd = "skill_from_docs.cli:main"
 
 [build-system]
 requires = ["hatchling"]

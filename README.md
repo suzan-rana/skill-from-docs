@@ -13,18 +13,18 @@ cp .env.example .env   # then fill in OPENROUTER_API_KEY
 
 ```bash
 # Full pipeline: crawl + LLM synthesis
-uv run skill-from-docs build https://scrapling.readthedocs.io/en/latest/ \
+uv run sfd build https://scrapling.readthedocs.io/en/latest/ \
   --name scrapling \
   --out ./output \
   --max-pages 150
 
 # Crawl only (no LLM cost)
-uv run skill-from-docs crawl https://scrapling.readthedocs.io/en/latest/ \
+uv run sfd crawl https://scrapling.readthedocs.io/en/latest/ \
   --max-pages 50 \
   --out crawl.json
 
 # Cloudflare-protected site
-uv run skill-from-docs build https://example.com/docs --stealth
+uv run sfd build https://example.com/docs --stealth
 ```
 
 Output: `./output/<skill-name>/` containing `SKILL.md`, `references/*.md`, `templates/*.py`.
