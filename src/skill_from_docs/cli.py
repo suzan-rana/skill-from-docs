@@ -69,9 +69,13 @@ def build(
         cache_path.write_bytes(pickle.dumps(pages))
         console.print(f"[green]Cached → {cache_path}[/green]")
 
+    total = len(pages)
     pages = [p for p in pages if p.word_count >= 30]
+    console.print(f"[cyan]Usable pages: {len(pages)}/{total} (>=30 words)[/cyan]")
     if not pages:
-        raise click.ClickException("No usable pages extracted.")
+        raise click.ClickException(
+            "No usable pages extracted. Try --stealth for SPAs, or use --no-cache to re-crawl."
+        )
 
     synth = Synthesizer(model=model)
     synth.load(pages, library_name)
@@ -82,14 +86,26 @@ def build(
     for f in plan.files:
         console.print(f"  • {f.path}")
 
-    generated = []
-    for f in plan.files:
-        console.print(f"[cyan]Generating {f.path}...[/cyan]")
-        generated.append(synth.generate_file(plan, f))
+    skill_dir = Path(out_dir) / plan.name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / ".skill-plan.json").write_text(
+        json.dumps(plan.model_dump(), indent=2), encoding="utf-8"
+    )
+    console.print(f"[green]Skill dir ready: {skill_dir}[/green]")
 
-    out_path = write_skill(Path(out_dir), plan, generated)
-    plan_dump = plan.model_dump()
-    (out_path / ".skill-plan.json").write_text(json.dumps(plan_dump, indent=2), encoding="utf-8")
+    for i, f in enumerate(plan.files, 1):
+        console.print(f"[cyan][{i}/{len(plan.files)}] Generating {f.path}...[/cyan]")
+        try:
+            gen = synth.generate_file(plan, f)
+        except Exception as e:
+            console.print(f"[red]Failed {f.path}: {e}[/red]")
+            continue
+        target = skill_dir / gen.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(gen.content, encoding="utf-8")
+        console.print(f"[green]  ✓ wrote {target}[/green]")
+
+    out_path = skill_dir
     console.print(f"[bold green]Skill written → {out_path}[/bold green]")
 
 

@@ -65,7 +65,13 @@ def crawl(
         url = queue.popleft()
         try:
             if stealth:
-                resp = StealthyFetcher.fetch(url, timeout=timeout * 1000, headless=True)
+                resp = StealthyFetcher.fetch(
+                    url,
+                    timeout=timeout * 1000,
+                    headless=True,
+                    network_idle=True,
+                    block_webrtc=True,
+                )
             else:
                 resp = Fetcher.get(url, timeout=timeout, stealthy_headers=True)
         except Exception as e:
@@ -77,19 +83,23 @@ def crawl(
             console.log(f"[yellow]{status}[/yellow] {url}")
             continue
 
-        html = resp.body if hasattr(resp, "body") else str(resp)
+        html = (
+            getattr(resp, "html_content", None)
+            or getattr(resp, "text", None)
+            or getattr(resp, "body", "")
+            or ""
+        )
         if isinstance(html, bytes):
             html = html.decode("utf-8", errors="replace")
 
         anchors: list[str] = []
         try:
-            for a in resp.css("a[href]"):
-                href = a.attrib.get("href") if hasattr(a, "attrib") else a.attrib.get("href", "")
-                if not href:
-                    continue
-                anchors.append(href)
+            anchors = list(resp.css("a::attr(href)").getall())
         except Exception:
-            pass
+            try:
+                anchors = [a.attrib.get("href", "") for a in resp.css("a[href]")]
+            except Exception:
+                pass
 
         links: list[str] = []
         for href in anchors:
