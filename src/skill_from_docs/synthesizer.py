@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 
-from anthropic import Anthropic
+from openai import OpenAI
 from pydantic import BaseModel, Field
 from rich.console import Console
 
@@ -12,8 +13,9 @@ from .extractor import ExtractedPage
 
 console = Console()
 
-DEFAULT_MODEL = "claude-opus-4-7"
-MAX_CORPUS_CHARS = 600_000  # ~150k tokens; cached across calls
+DEFAULT_MODEL = "anthropic/claude-sonnet-4.5"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+MAX_CORPUS_CHARS = 600_000  # ~150k tokens
 
 
 class SkillFile(BaseModel):
@@ -35,7 +37,6 @@ class GeneratedFile:
 
 
 def _build_corpus(pages: list[ExtractedPage]) -> str:
-    """Pack pages into single cached document, truncating low-value pages first."""
     pages_sorted = sorted(pages, key=lambda p: p.word_count, reverse=True)
     chunks: list[str] = []
     used = 0
@@ -52,7 +53,6 @@ def _build_corpus(pages: list[ExtractedPage]) -> str:
 
 
 def _extract_json(text: str) -> str:
-    """Pull first ```json fenced block or first balanced {...}."""
     m = re.search(r"```json\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
     if m:
         return m.group(1)
@@ -63,7 +63,6 @@ def _extract_json(text: str) -> str:
 
 
 def _extract_markdown(text: str) -> str:
-    """Strip wrapping ```markdown fences if present, else return as-is."""
     m = re.search(r"```(?:markdown|md)?\s*\n(.*?)```\s*$", text, flags=re.DOTALL)
     if m:
         return m.group(1).strip()
@@ -71,8 +70,29 @@ def _extract_markdown(text: str) -> str:
 
 
 class Synthesizer:
-    def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None):
-        self.client = Anthropic(api_key=api_key) if api_key else Anthropic()
+    """OpenRouter-backed synthesizer.
+
+    Uses the OpenAI-compatible chat completions API. For Anthropic models,
+    OpenRouter passes through `cache_control` blocks for prompt caching.
+    """
+
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ):
+        key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise RuntimeError("OPENROUTER_API_KEY not set")
+        self.client = OpenAI(
+            api_key=key,
+            base_url=base_url or os.environ.get("OPENROUTER_BASE_URL", DEFAULT_BASE_URL),
+            default_headers={
+                "HTTP-Referer": os.environ.get("OPENROUTER_REFERRER", "https://github.com/skill-from-docs"),
+                "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "skill-from-docs"),
+            },
+        )
         self.model = model
         self._corpus: str = ""
         self._library_name: str = ""
@@ -82,23 +102,45 @@ class Synthesizer:
         self._library_name = library_name
         console.log(f"corpus packed: {len(self._corpus):,} chars across {len(pages)} pages")
 
-    def _cached_system(self) -> list[dict]:
+    def _is_anthropic_model(self) -> bool:
+        return self.model.lower().startswith("anthropic/")
+
+    def _system_messages(self) -> list[dict]:
+        system_text = (
+            "You build Claude Code skills from technical documentation. "
+            "A skill is a folder with SKILL.md (frontmatter + concise procedural guide), "
+            "references/*.md (lookup tables, API specs), and templates/*.py (runnable scaffolds). "
+            "Skills must be terse, actionable, and optimized for an LLM agent reading them just-in-time."
+        )
+        corpus_text = f"=== DOCUMENTATION CORPUS for {self._library_name} ===\n{self._corpus}"
+
+        if self._is_anthropic_model():
+            return [
+                {"role": "system", "content": [{"type": "text", "text": system_text}]},
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": corpus_text,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+            ]
         return [
-            {
-                "type": "text",
-                "text": (
-                    "You build Claude Code skills from technical documentation. "
-                    "A skill is a folder with SKILL.md (frontmatter + concise procedural guide), "
-                    "references/*.md (lookup tables, API specs), and templates/*.py (runnable scaffolds). "
-                    "Skills must be terse, actionable, and optimized for an LLM agent reading them just-in-time."
-                ),
-            },
-            {
-                "type": "text",
-                "text": f"=== DOCUMENTATION CORPUS for {self._library_name} ===\n{self._corpus}",
-                "cache_control": {"type": "ephemeral"},
-            },
+            {"role": "system", "content": system_text},
+            {"role": "system", "content": corpus_text},
         ]
+
+    def _chat(self, user: str, max_tokens: int) -> str:
+        messages = self._system_messages() + [{"role": "user", "content": user}]
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content or ""
 
     def plan(self) -> SkillPlan:
         user = (
@@ -115,16 +157,10 @@ class Synthesizer:
             '    {"path": "templates/basic.py", "purpose": "..."}\n'
             "  ]\n"
             "}\n\n"
-            "Rules: 1 SKILL.md, 2-5 reference files, 1-4 templates. Choose files that the LLM will need at runtime. "
+            "Rules: 1 SKILL.md, 2-5 reference files, 1-4 templates. Choose files the LLM will need at runtime. "
             "Wrap the JSON in a ```json fence. No prose outside the fence."
         )
-        msg = self.client.messages.create(
-            model=self.model,
-            max_tokens=4000,
-            system=self._cached_system(),
-            messages=[{"role": "user", "content": user}],
-        )
-        raw = msg.content[0].text
+        raw = self._chat(user, max_tokens=4000)
         data = json.loads(_extract_json(raw))
         return SkillPlan(**data)
 
@@ -150,7 +186,7 @@ class Synthesizer:
             instr = (
                 f"Write the file `{target.path}`.\n"
                 f"Purpose: {target.purpose}\n\n"
-                "It is a runnable Python template. Include:\n"
+                "Runnable Python template. Include:\n"
                 "- Top docstring describing what it does and how to fill placeholders.\n"
                 "- Imports from the actual library based on the corpus.\n"
                 "- Placeholders like {{URL}}, {{SELECTOR}} where the user customizes.\n"
@@ -161,18 +197,13 @@ class Synthesizer:
             instr = (
                 f"Write the reference file `{target.path}`.\n"
                 f"Purpose: {target.purpose}\n\n"
-                "It must be terse and lookup-oriented: tables, bullet lists, code snippets. "
+                "Terse, lookup-oriented: tables, bullet lists, code snippets. "
                 "Cite concrete API names, parameters, and patterns from the corpus. "
                 "No marketing language. Return ONLY the markdown content."
             )
 
-        msg = self.client.messages.create(
-            model=self.model,
-            max_tokens=8000,
-            system=self._cached_system(),
-            messages=[{"role": "user", "content": instr}],
-        )
-        raw = msg.content[0].text
+        raw = self._chat(instr, max_tokens=8000)
+
         if is_template:
             content = _extract_markdown(raw)
             content = re.sub(r"^```python\s*\n", "", content)

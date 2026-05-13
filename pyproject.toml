@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "scrapling[fetchers]>=0.4.8",
-    "anthropic>=0.40.0",
+    "openai>=1.54.0",
     "click>=8.1.7",
     "html2text>=2024.2.26",
     "rich>=13.9.0",

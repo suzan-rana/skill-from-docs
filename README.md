@@ -1,12 +1,12 @@
 # skill-from-docs
 
-CLI agentic tool. Crawls a documentation site with [scrapling](https://scrapling.readthedocs.io), then synthesizes a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) folder via the Claude API.
+CLI agentic tool. Crawls a documentation site with [scrapling](https://scrapling.readthedocs.io), then synthesizes a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) folder via any LLM available on [OpenRouter](https://openrouter.ai).
 
 ## Install
 
 ```bash
 uv sync
-export ANTHROPIC_API_KEY=sk-ant-...
+cp .env.example .env   # then fill in OPENROUTER_API_KEY
 ```
 
 ## Use
@@ -56,6 +56,6 @@ src/skill_from_docs/
 | `--out` | `./output` | Output root |
 | `--max-pages` | 150 | Hard cap on crawl |
 | `--stealth` | off | StealthyFetcher (slower, bypasses CF/WAF) |
-| `--model` | `claude-opus-4-7` | Anthropic model id |
+| `--model` | `anthropic/claude-sonnet-4.5` | Any OpenRouter model id (e.g. `openai/gpt-4o`, `google/gemini-2.0-flash`) |
 | `--cache-dir` | `.skill-cache` | Cache extracted pages between runs |
 | `--no-cache` | off | Force re-crawl |

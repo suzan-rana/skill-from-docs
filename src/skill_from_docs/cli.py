@@ -31,7 +31,11 @@ def main() -> None:
 @click.option("--out", "out_dir", default="./output", help="Output root directory.")
 @click.option("--max-pages", default=150, type=int, help="Max pages to crawl.")
 @click.option("--stealth", is_flag=True, help="Use StealthyFetcher (slower, bypasses CF).")
-@click.option("--model", default=DEFAULT_MODEL, help="Anthropic model id.")
+@click.option(
+    "--model",
+    default=lambda: os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL),
+    help="OpenRouter model id (e.g. anthropic/claude-sonnet-4.5, openai/gpt-4o, google/gemini-2.0-flash).",
+)
 @click.option("--cache-dir", default=".skill-cache", help="Cache crawled+extracted pages here.")
 @click.option("--no-cache", is_flag=True, help="Ignore existing crawl cache.")
 def build(
@@ -45,8 +49,8 @@ def build(
     no_cache: bool,
 ) -> None:
     """Build a Claude Code skill from documentation site URL."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise click.UsageError("Set ANTHROPIC_API_KEY environment variable.")
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        raise click.UsageError("Set OPENROUTER_API_KEY environment variable.")
 
     library_name = name or urlparse(url).netloc.split(".")[0]
     cache_path = Path(cache_dir) / f"{library_name}.pkl"
